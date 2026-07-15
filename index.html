@@ -461,6 +461,7 @@ async function loadCustomersFromAirtable() {
       new Date().toLocaleString('en-GB',{timeZone:'Asia/Bangkok'}).split(',')[0]
       + ' · Airtable CRM — <b>' + D.length + ' customers</b> from "Trip Completed" view · sorted by revenue';
 
+    us(); // update header stats
     console.log('✓ Loaded', D.length, 'customers from Airtable');
   } catch(err) {
     if (statusEl) statusEl.textContent = '⚠ Customer load failed: ' + err.message;
