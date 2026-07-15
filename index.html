@@ -413,7 +413,7 @@ async function loadCustomersFromAirtable() {
   if (statusEl) statusEl.textContent = '⏳ Loading customers from Airtable...';
   try {
     let all = [], offset = null, page = 0;
-    const fieldNames = ['Full Name','Customer ID','Phone number','Contact Channel','No of trips','Revenue'];
+    const fieldNames = ['Full Name','Customer ID','Phone number','Contact Channel','No of trips','Revenue','Customer journey'];
     const fieldParams = fieldNames.map(f => 'fields[]=' + encodeURIComponent(f)).join('&');
     do {
       page++;
@@ -439,7 +439,8 @@ async function loadCustomersFromAirtable() {
         ph:  String(f['Phone number'] || '').trim(),
         ch:  String(f['Contact Channel'] || '').trim(),
         tc:  Number(f['No of trips'] || 0),
-        r:   rev
+        r:   rev,
+        tj:  Array.isArray(f['Customer journey']) ? f['Customer journey'] : []
       };
     }).filter(c => c.n).sort((a,b) => b.r - a.r);
 
@@ -469,49 +470,56 @@ async function loadCustomersFromAirtable() {
   }
 }
 
-async function loadTripsFromAirtable() {
-  const statusEl = document.getElementById('trip-status');
-  if (statusEl) statusEl.textContent = '⏳ Loading trips...';
-  try {
-    let all = [], offset = null, page = 0;
-    do {
-      page++;
-      let url = 'https://api.airtable.com/v0/' + AT_BASE + '/' + AT_TRIPS_TABLE + '?pageSize=100';
-      if (offset) url += '&offset=' + offset;
-      const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + AT_PAT } });
-      if (!resp.ok) throw new Error('Airtable Trips error: ' + resp.status);
-      const data = await resp.json();
-      all = all.concat(data.records || []);
-      offset = data.offset || null;
-      if (statusEl) statusEl.textContent = '⏳ Trips... (' + all.length + ')';
-    } while (offset && page < 300);
+// Trips are fetched on-demand when a customer row is expanded
+// using the 'Customer journey' linked record IDs stored in c.tj
 
-    T = {};
-    for (const rec of all) {
-      const f = rec.fields;
-      const links = f['\uD83D\uDEE3CRM'] || f['CRM'] || f['\uD83D\uDEE3 CRM'] || [];
-      const arr = Array.isArray(links) ? links : [];
-      for (const cid of arr) {
-        if (!T[cid]) T[cid] = [];
-        T[cid].push({
-          gn:   String(f['Name'] || f['Trip Name'] || ''),
-          ar:   String(f['Arrival Date'] || f['Arrival'] || ''),
-          co:   String(f['Checkout Date'] || f['Checkout'] || ''),
-          cost: Number(f['Agreed cost'] || f['Total Cost'] || f['Cost'] || 0)
+async function fetchTripsForCustomer(crmId) {
+  const c = D.find(x => x.id === crmId);
+  if (!c || !c.tj || c.tj.length === 0) return [];
+  if (T[crmId]) return T[crmId]; // cached
+
+  try {
+    const trips = [];
+    // Fetch each trip record by ID (batch up to 3 at a time)
+    const batchSize = 10;
+    for (let i = 0; i < c.tj.length; i += batchSize) {
+      const batch = c.tj.slice(i, i + batchSize);
+      const filterFormula = 'OR(' + batch.map(id => 'RECORD_ID()="' + id + '"').join(',') + ')';
+      const url = 'https://api.airtable.com/v0/' + AT_BASE + '/' + AT_TRIPS_TABLE
+        + '?filterByFormula=' + encodeURIComponent(filterFormula)
+        + '&fields[]=Trip%20Name&fields[]=Arrival%20Date&fields[]=Checkout%20Date&fields[]=Entire%20trip%20cost&fields[]=Customer%20group%20naming';
+      const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + AT_PAT } });
+      if (!resp.ok) throw new Error('Trips fetch error: ' + resp.status);
+      const data = await resp.json();
+      for (const rec of (data.records || [])) {
+        const f = rec.fields;
+        trips.push({
+          gn:   String(f['Trip Name'] || f['Customer group naming'] || ''),
+          ar:   String(f['Arrival Date'] || ''),
+          co:   String(f['Checkout Date'] || ''),
+          cost: Number(f['Entire trip cost'] || 0)
         });
       }
     }
-    tripsLoaded = true;
-    if (statusEl) { statusEl.textContent = '✓ ' + all.length + ' trips'; setTimeout(() => { if(statusEl) statusEl.textContent=''; }, 4000); }
-    render();
-    console.log('✓ Loaded', all.length, 'trips from Airtable');
+    // Sort by arrival date descending (most recent first)
+    trips.sort((a,b) => (b.ar||'').localeCompare(a.ar||''));
+    T[crmId] = trips; // cache
+    return trips;
   } catch(err) {
-    if (statusEl) statusEl.textContent = '⚠ Trips failed: ' + err.message;
-    console.error('Trip load error:', err);
+    console.error('Trip fetch error for', crmId, err);
+    return [];
   }
 }
 
-async function refreshTrips() { T={}; tripsLoaded=false; await loadTripsFromAirtable(); }
+async function loadTripsFromAirtable() {
+  // No-op: trips now load on-demand per customer
+  tripsLoaded = true;
+}
+
+async function refreshTrips() {
+  T = {};
+  console.log('Trip cache cleared');
+}
 
 
 let ST={};
@@ -601,7 +609,7 @@ function render(){
     const nac=!!st.nac;
     const clg=!!st.clg;
     const notes=st.notes||'';
-    return`<div class="rw${sent?' done':''}${nac?' no-access':''}" id="rw-${c.id}"><div class="rm" onclick="tog('${c.id}')"><div><span class="rk ${rc}">${rank}</span></div><div><div class="cn">${c.n}</div><div class="rbar"><div class="rfil" style="width:${pct}%"></div></div></div><div><div class="cidcell">${c.cid||'<span style=\"color:var(--text3)\">—</span>'}</div></div><div><div class="phcell">${c.ph||'<span style=\"color:var(--text3)\">—</span>'}</div></div><div><div class="rvn">${fr(c.r)}</div></div><div><span class="chbadge ${chc(c.ch)}">${c.ch==='—'?'—':c.ch}</span></div><div><div class="tt${open?' open':''}" id="tt-${c.id}"><span class="ar">▶</span> ${c.tc} trip${c.tc!==1?'s':''}</div></div><div onclick="event.stopPropagation()">${adminUnlocked ? `<select class="asel" onchange="sv('${c.id}','assignee',this.value)"><option value="">Assign…</option>${['Hari','Suprith','Srinath','View'].map(a=>`<option${st.assignee===a?' selected':''}>${a}</option>`).join('')}</select>` : `<div class="asel-locked">${st.assignee || '<span style=\"color:var(--text3)\">—</span>'}</div>`}</div><div onclick="event.stopPropagation()"><label class="cbl nac-label"><input type="checkbox"${nac?' checked':''} onchange="hna('${c.id}',this.checked)"><span class="${nac?'nac-chk':'nac-unchk'}">${nac?'✗':'—'}</span></label></div><div onclick="event.stopPropagation()"><input type="date" class="di" value="${toISO(st.bd||'')}" onchange="sv('${c.id}','bd',this.value)" title="Date broadcast sent"></div><div onclick="event.stopPropagation()"><label class="cbl"><input type="checkbox"${sent?' checked':''} onchange="hs('${c.id}',this.checked)"><span class="${sent?'sl':'ul'}">${sent?'Sent':'Mark'}</span></label></div><div onclick="event.stopPropagation()"><label class="cbl clg-label"><input type="checkbox"${clg?' checked':''} onchange="hclg('${c.id}',this.checked)"><span class="${clg?'clg-chk':'clg-unchk'}">${clg?'✓':'—'}</span></label></div><div onclick="event.stopPropagation()"><input type="text" class="notes-inline" placeholder="Add noteâ¦" value="${(st.notes||''). replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" onchange="sn('${c.id}',this.value)"></div></div><div class="tp${open?' open':''}" id="tp-${c.id}"><div class="ti"><div style="padding:6px 0;font-size:11px;color:var(--text3);font-style:italic">${(()=>{const ts=T[c.id];if(!ts||!ts.length){const phHtml=c.ph?'<span style="background:#e4f8f2;color:#0a6e6e;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;margin-right:6px">📱 '+c.ph+'</span>':''; const cidHtml=c.cid?'<span style="background:#fff4ee;color:#c85010;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600">🆔 '+c.cid+'</span>':''; return (phHtml||cidHtml?'<div style="padding:4px 0 6px;display:flex;gap:4px;flex-wrap:wrap">'+phHtml+cidHtml+'</div>':'')+ '<em style="font-size:11px;color:var(--text3)">No completed trips in loaded data — '+c.tc+' trip'+(c.tc!==1?'s':'')+' recorded in Airtable.</em>';}const phHtml=c.ph?'<div style="display:inline-block;background:#e4f8f2;color:#0a6e6e;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;margin:0 4px 4px 0">📱 '+c.ph+'</div>':''; const cidHtml=c.cid?'<div style="display:inline-block;background:#fff4ee;color:#c85010;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;margin:0 4px 4px 0">🆔 '+c.cid+'</div>':''; const contactRow=(phHtml||cidHtml)?'<div style="padding:2px 0 7px;display:flex;flex-wrap:wrap">'+phHtml+cidHtml+'</div>':''; return contactRow+ts.map(t=>{ const a=t.ar?t.ar.split('-').slice(2,3)+'/'+t.ar.split('-').slice(1,2)+'/'+t.ar.split('-').slice(0,1):''; const d=t.co?t.co.split('-').slice(2,3)+'/'+t.co.split('-').slice(1,2)+'/'+t.co.split('-').slice(0,1):''; const cost=t.cost?'฿'+Math.round(t.cost).toLocaleString():''; const grp=t.gn||'<span style="color:var(--text3);font-style:italic">No group name</span>'; return '<div class="tr"><div class="tdot"></div><div class="tn"><div class="tgn">'+grp+'</div><div class="tdt">'+a+(d?' → '+d:'')+' '+(cost?'<span class="tc">'+cost+'</span>':'')+'</div></div></div>'; }).join('');})()}</div><div class="notes-wrap"><div class="notes-label">💬 Notes <span class="notes-saved" id="ns-${c.id}">Saved ✓</span></div><textarea class="notes-ta" placeholder="Add notes about this customer or broadcast…" onchange="sn('${c.id}',this.value)">${st.notes||''}</textarea></div></div></div></div>`;
+    return`<div class="rw${sent?' done':''}${nac?' no-access':''}" id="rw-${c.id}"><div class="rm" onclick="tog('${c.id}')"><div><span class="rk ${rc}">${rank}</span></div><div><div class="cn">${c.n}</div><div class="rbar"><div class="rfil" style="width:${pct}%"></div></div></div><div><div class="cidcell">${c.cid||'<span style=\"color:var(--text3)\">—</span>'}</div></div><div><div class="phcell">${c.ph||'<span style=\"color:var(--text3)\">—</span>'}</div></div><div><div class="rvn">${fr(c.r)}</div></div><div><span class="chbadge ${chc(c.ch)}">${c.ch==='—'?'—':c.ch}</span></div><div><div class="tt${open?' open':''}" id="tt-${c.id}"><span class="ar">▶</span> ${c.tc} trip${c.tc!==1?'s':''}</div></div><div onclick="event.stopPropagation()">${adminUnlocked ? `<select class="asel" onchange="sv('${c.id}','assignee',this.value)"><option value="">Assign…</option>${['Hari','Suprith','Srinath','View'].map(a=>`<option${st.assignee===a?' selected':''}>${a}</option>`).join('')}</select>` : `<div class="asel-locked">${st.assignee || '<span style=\"color:var(--text3)\">—</span>'}</div>`}</div><div onclick="event.stopPropagation()"><label class="cbl nac-label"><input type="checkbox"${nac?' checked':''} onchange="hna('${c.id}',this.checked)"><span class="${nac?'nac-chk':'nac-unchk'}">${nac?'✗':'—'}</span></label></div><div onclick="event.stopPropagation()"><input type="date" class="di" value="${toISO(st.bd||'')}" onchange="sv('${c.id}','bd',this.value)" title="Date broadcast sent"></div><div onclick="event.stopPropagation()"><label class="cbl"><input type="checkbox"${sent?' checked':''} onchange="hs('${c.id}',this.checked)"><span class="${sent?'sl':'ul'}">${sent?'Sent':'Mark'}</span></label></div><div onclick="event.stopPropagation()"><label class="cbl clg-label"><input type="checkbox"${clg?' checked':''} onchange="hclg('${c.id}',this.checked)"><span class="${clg?'clg-chk':'clg-unchk'}">${clg?'✓':'—'}</span></label></div><div onclick="event.stopPropagation()"><input type="text" class="notes-inline" placeholder="Add noteâ¦" value="${(st.notes||''). replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" onchange="sn('${c.id}',this.value)"></div></div><div class="tp${open?' open':''}" id="tp-${c.id}"><div class="ti" id="ti-${c.id}"><div style="padding:6px 0;font-size:11px;color:var(--text3);font-style:italic">${(()=>{const ts=T[c.id];if(!ts||!ts.length){const phHtml=c.ph?'<span style="background:#e4f8f2;color:#0a6e6e;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;margin-right:6px">📱 '+c.ph+'</span>':''; const cidHtml=c.cid?'<span style="background:#fff4ee;color:#c85010;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600">🆔 '+c.cid+'</span>':''; return (phHtml||cidHtml?'<div style="padding:4px 0 6px;display:flex;gap:4px;flex-wrap:wrap">'+phHtml+cidHtml+'</div>':'')+ '<em style="font-size:11px;color:var(--text3)">No completed trips in loaded data — '+c.tc+' trip'+(c.tc!==1?'s':'')+' recorded in Airtable.</em>';}const phHtml=c.ph?'<div style="display:inline-block;background:#e4f8f2;color:#0a6e6e;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;margin:0 4px 4px 0">📱 '+c.ph+'</div>':''; const cidHtml=c.cid?'<div style="display:inline-block;background:#fff4ee;color:#c85010;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;margin:0 4px 4px 0">🆔 '+c.cid+'</div>':''; const contactRow=(phHtml||cidHtml)?'<div style="padding:2px 0 7px;display:flex;flex-wrap:wrap">'+phHtml+cidHtml+'</div>':''; return contactRow+ts.map(t=>{ const a=t.ar?t.ar.split('-').slice(2,3)+'/'+t.ar.split('-').slice(1,2)+'/'+t.ar.split('-').slice(0,1):''; const d=t.co?t.co.split('-').slice(2,3)+'/'+t.co.split('-').slice(1,2)+'/'+t.co.split('-').slice(0,1):''; const cost=t.cost?'฿'+Math.round(t.cost).toLocaleString():''; const grp=t.gn||'<span style="color:var(--text3);font-style:italic">No group name</span>'; return '<div class="tr"><div class="tdot"></div><div class="tn"><div class="tgn">'+grp+'</div><div class="tdt">'+a+(d?' → '+d:'')+' '+(cost?'<span class="tc">'+cost+'</span>':'')+'</div></div></div>'; }).join('');})()}</div><div class="notes-wrap"><div class="notes-label">💬 Notes <span class="notes-saved" id="ns-${c.id}">Saved ✓</span></div><textarea class="notes-ta" placeholder="Add notes about this customer or broadcast…" onchange="sn('${c.id}',this.value)">${st.notes||''}</textarea></div></div></div></div>`;
   }).join('');
 }
 
