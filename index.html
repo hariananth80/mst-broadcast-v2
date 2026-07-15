@@ -499,7 +499,7 @@ async function fetchTripsForCustomer(crmId) {
       for (const rec of (data.records || [])) {
         const f = rec.fields;
         allTrips.push({
-          gn:     String(f['Trip Name'] || f['Customer group naming'] || ''),
+          gn:     String(f['Customer group naming'] || f['Trip Name'] || ''),
           ar:     String(f['Arrival Date'] || ''),
           co:     String(f['Checkout Date'] || ''),
           cost:   Number(f['Entire trip cost'] || 0),
