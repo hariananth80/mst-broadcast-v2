@@ -475,35 +475,47 @@ async function loadCustomersFromAirtable() {
 
 async function fetchTripsForCustomer(crmId) {
   if (T[crmId]) return T[crmId]; // cached
+  // Get trip IDs from the customer's CRM record (stored in c.tj)
+  const c = D.find(x => x.id === crmId);
+  const tripIds = (c && c.tj && c.tj.length) ? c.tj : [];
+  if (!tripIds.length) { T[crmId] = []; return []; }
+
+  const fieldNames = ['Trip Name','Customer group naming','Arrival Date','Checkout Date','Entire trip cost','Stage','Channel contact'];
+  const fieldParams = fieldNames.map(f => 'fields[]=' + encodeURIComponent(f)).join('&');
+  const allTrips = [];
+
   try {
-    // Filter Master Trips by CRM Record ID using lookup field
-    const formula = 'FIND("' + crmId + '", ARRAYJOIN({Record ID (from Customer journey)}, ","))';
-    const fields = [
-      'Trip Name','Customer group naming','Arrival Date','Checkout Date',
-      'Entire trip cost','Stage','Channel contact'
-    ].map(f => 'fields[]=' + encodeURIComponent(f)).join('&');
-    const url = 'https://api.airtable.com/v0/' + AT_BASE + '/' + AT_TRIPS_TABLE
-      + '?filterByFormula=' + encodeURIComponent(formula)
-      + '&sort[0][field]=Arrival%20Date&sort[0][direction]=desc&' + fields;
-    const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + AT_PAT } });
-    if (!resp.ok) throw new Error('Trips fetch error: ' + resp.status);
-    const data = await resp.json();
-    const trips = (data.records || []).map(rec => {
-      const f = rec.fields;
-      return {
-        gn:     String(f['Trip Name'] || f['Customer group naming'] || ''),
-        ar:     String(f['Arrival Date'] || ''),
-        co:     String(f['Checkout Date'] || ''),
-        cost:   Number(f['Entire trip cost'] || 0),
-        status: String(f['Stage'] || ''),
-        ch:     String(f['Channel contact'] || '')
-      };
-    });
-    T[crmId] = trips;
-    console.log('Loaded', trips.length, 'trips for', crmId);
-    return trips;
+    // Fetch in batches of 10 using OR(RECORD_ID()=...) formula
+    const batchSize = 10;
+    for (let i = 0; i < tripIds.length; i += batchSize) {
+      const batch = tripIds.slice(i, i + batchSize);
+      const formula = 'OR(' + batch.map(id => 'RECORD_ID()="' + id + '"').join(',') + ')';
+      const url = 'https://api.airtable.com/v0/' + AT_BASE + '/' + AT_TRIPS_TABLE
+        + '?filterByFormula=' + encodeURIComponent(formula)
+        + '&sort[0][field]=Arrival%20Date&sort[0][direction]=desc&' + fieldParams;
+      const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + AT_PAT } });
+      if (!resp.ok) throw new Error('Trips fetch error: ' + resp.status);
+      const data = await resp.json();
+      for (const rec of (data.records || [])) {
+        const f = rec.fields;
+        allTrips.push({
+          gn:     String(f['Trip Name'] || f['Customer group naming'] || ''),
+          ar:     String(f['Arrival Date'] || ''),
+          co:     String(f['Checkout Date'] || ''),
+          cost:   Number(f['Entire trip cost'] || 0),
+          status: String(f['Stage'] || ''),
+          ch:     String(f['Channel contact'] || '')
+        });
+      }
+    }
+    // Sort most recent first
+    allTrips.sort((a,b) => (b.ar||'').localeCompare(a.ar||''));
+    T[crmId] = allTrips;
+    console.log('Loaded', allTrips.length, 'trips for', crmId);
+    return allTrips;
   } catch(err) {
     console.error('Trip fetch error for', crmId, ':', err);
+    T[crmId] = [];
     return [];
   }
 }
