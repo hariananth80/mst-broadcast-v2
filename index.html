@@ -413,8 +413,8 @@ async function loadCustomersFromAirtable() {
   if (statusEl) statusEl.textContent = '⏳ Loading customers from Airtable...';
   try {
     let all = [], offset = null, page = 0;
-    const fields = ['fldpo40NaPfxcwstg','fldzaMoVp14pYB4me','flddoNYFVjr1w4uq6','fldzshsoboYY8hs2Y','fldiKHsMxXDNS1x70','fld1XeohMTnD4c6Cu'];
-    const fieldParams = fields.map(f => 'fields[]=' + f).join('&');
+    const fieldNames = ['Full Name','Customer ID','Phone number','Contact Channel','No of trips','Revenue'];
+    const fieldParams = fieldNames.map(f => 'fields[]=' + encodeURIComponent(f)).join('&');
     do {
       page++;
       let url = 'https://api.airtable.com/v0/' + AT_BASE + '/' + AT_CRM_TABLE
@@ -431,14 +431,14 @@ async function loadCustomersFromAirtable() {
     // Build D array sorted by revenue descending
     D = all.map(rec => {
       const f = rec.fields;
-      const rev = parseFloat(String(f['fld1XeohMTnD4c6Cu'] || '0').replace(/[^0-9.]/g,'')) || 0;
+      const rev = parseFloat(String(f['Revenue'] || '0').replace(/[^0-9.]/g,'')) || 0;
       return {
         id:  rec.id,
-        n:   String(f['fldpo40NaPfxcwstg']    || '').trim(),
-        cid: String(f['fldzaMoVp14pYB4me']  || '').trim(),
-        ph:  String(f['flddoNYFVjr1w4uq6']   || '').trim(),
-        ch:  String(f['fldzshsoboYY8hs2Y'] || '').trim(),
-        tc:  Number(f['fldiKHsMxXDNS1x70']   || 0),
+        n:   String(f['Full Name'] || '').trim(),
+        cid: String(f['Customer ID'] || '').trim(),
+        ph:  String(f['Phone number'] || '').trim(),
+        ch:  String(f['Contact Channel'] || '').trim(),
+        tc:  Number(f['No of trips'] || 0),
         r:   rev
       };
     }).filter(c => c.n).sort((a,b) => b.r - a.r);
