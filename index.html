@@ -247,7 +247,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 
 <div class="sb">
   <div class="dot"></div>
-  <span>Loaded <span id="lu"></span> · Airtable CRM — 600 customers from "Trip Completed" view · 2,829 total · sorted by revenue</span>
+  <span>Loaded <span id="lu"></span> · ⏳ Loading customers from Airtable...</span>
   <span class="snote" id="sn">Saved ✓</span>
 </div>
 
@@ -270,6 +270,10 @@ console.log("MST Dashboard v2.0 loaded - Dynamic trips");
 // ADMIN PIN — change this to your preferred PIN
 const ADMIN_PIN = '8087';
 const SHEET_TAB = 'Broadcast Log v2';
+const AT_PAT         = 'patgBjJol8gwtxUys.09c0e47f66e2b5379b242a5c16504370ce13de6f69a30914a5bf9578d28c8541';
+const AT_BASE        = 'appND9kP55cvkDX7V';
+const AT_CRM_TABLE   = 'tbljAtpRqo0s1siQe';
+const AT_TRIPS_TABLE = 'tblodAjjJy8FBQAY7';
 let adminUnlocked = false;
 
 function saveGsUrl(){
@@ -395,7 +399,7 @@ let tripsLoaded = false;
 let customersLoaded = false;
 
 async function loadCustomersFromAirtable() {
-  const statusEl = document.getElementById('sbar');
+  const statusEl = document.getElementById('lu');
   if (statusEl) statusEl.textContent = '⏳ Loading customers from Airtable...';
   try {
     let all = [], offset = null, page = 0;
@@ -443,9 +447,9 @@ async function loadCustomersFromAirtable() {
     await // customers & state loaded by loadCustomersFromAirtable()
     render();
 
-    if (statusEl) statusEl.textContent =
-      '● Loaded ' + new Date().toLocaleString('en-GB',{timeZone:'Asia/Bangkok'}).split(',')[0]
-      + ' · Airtable CRM — ' + D.length + ' customers from "Trip Completed" view · sorted by revenue';
+    if (statusEl) statusEl.innerHTML =
+      new Date().toLocaleString('en-GB',{timeZone:'Asia/Bangkok'}).split(',')[0]
+      + ' · Airtable CRM — <b>' + D.length + ' customers</b> from "Trip Completed" view · sorted by revenue';
 
     console.log('✓ Loaded', D.length, 'customers from Airtable');
   } catch(err) {
