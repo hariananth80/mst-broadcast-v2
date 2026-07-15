@@ -593,6 +593,7 @@ function render(){
     const rank=D.indexOf(c)+1;
     const rc=rank===1?'r1':rank<=3?'r3':rank<=10?'r10':'';
     const st=ST[c.id]||{};
+    const MR=D.length?D[0].r:1;
     const pct=Math.round((c.r/MR)*100);
     const sent=!!st.sent;
     const open=!!st.open;
