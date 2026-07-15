@@ -276,6 +276,16 @@ const AT_CRM_TABLE   = 'tbljAtpRqo0s1siQe';
 const AT_TRIPS_TABLE = 'tblodAjjJy8FBQAY7';
 let adminUnlocked = false;
 
+const TEAM = ['Hari','Suprith','Srinath','View'];
+
+function assignAll() {
+  D.forEach((c, i) => {
+    if (!ST[c.id]) ST[c.id] = {};
+    if (!ST[c.id].assignee) ST[c.id].assignee = TEAM[i % TEAM.length];
+  });
+  try { localStorage.setItem('mst_bc4_v2', JSON.stringify(ST)); } catch(e) {}
+}
+
 function saveGsUrl(){
   const url=document.getElementById('gs-url-input').value.trim();
   if(url){
@@ -720,7 +730,7 @@ function closeUncheckModal(){
 
 // ===== GOOGLE SHEETS SYNC =====
 // Paste your Google Apps Script Web App URL here after deployment:
-const GS_URL = 'https://script.google.com/macros/s/AKfycbzbua4VnEhkCcS3iY9fXDdF537I937kVfbQTZIVJHnmVgS6IzRHPfWQnIY2UxcciDxt5Q/exec';  // Hardcoded Apps Script URL
+const GS_URL='https://script.google.com/macros/s/AKfycbwDf25HJJRm0CmPcQSfQlDzqAxCFXyPJZWW_vRPSJkqKrVSt7_MkaSxMRbYa4NsK2C82g/exec';  // Hardcoded Apps Script URL
 
 // Always returns the freshest URL from any source
 function getGsUrl(){
