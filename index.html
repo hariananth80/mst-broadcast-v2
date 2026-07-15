@@ -474,39 +474,36 @@ async function loadCustomersFromAirtable() {
 // using the 'Customer journey' linked record IDs stored in c.tj
 
 async function fetchTripsForCustomer(crmId) {
-  const c = D.find(x => x.id === crmId);
-  if (!c || !c.tj || c.tj.length === 0) return [];
   if (T[crmId]) return T[crmId]; // cached
-
   try {
-    const trips = [];
-    // Fetch each trip record by ID (batch up to 3 at a time)
-    const batchSize = 10;
-    for (let i = 0; i < c.tj.length; i += batchSize) {
-      const batch = c.tj.slice(i, i + batchSize);
-      const filterFormula = 'OR(' + batch.map(id => 'RECORD_ID()="' + id + '"').join(',') + ')';
-      const url = 'https://api.airtable.com/v0/' + AT_BASE + '/' + AT_TRIPS_TABLE
-        + '?filterByFormula=' + encodeURIComponent(filterFormula)
-        + '&fields[]=Trip%20Name&fields[]=Arrival%20Date&fields[]=Checkout%20Date&fields[]=Entire%20trip%20cost&fields[]=Customer%20group%20naming';
-      const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + AT_PAT } });
-      if (!resp.ok) throw new Error('Trips fetch error: ' + resp.status);
-      const data = await resp.json();
-      for (const rec of (data.records || [])) {
-        const f = rec.fields;
-        trips.push({
-          gn:   String(f['Trip Name'] || f['Customer group naming'] || ''),
-          ar:   String(f['Arrival Date'] || ''),
-          co:   String(f['Checkout Date'] || ''),
-          cost: Number(f['Entire trip cost'] || 0)
-        });
-      }
-    }
-    // Sort by arrival date descending (most recent first)
-    trips.sort((a,b) => (b.ar||'').localeCompare(a.ar||''));
-    T[crmId] = trips; // cache
+    // Filter Master Trips by CRM Record ID using lookup field
+    const formula = 'FIND("' + crmId + '", ARRAYJOIN({Record ID (from Customer journey)}, ","))';
+    const fields = [
+      'Trip Name','Customer group naming','Arrival Date','Checkout Date',
+      'Entire trip cost','Stage','Channel contact'
+    ].map(f => 'fields[]=' + encodeURIComponent(f)).join('&');
+    const url = 'https://api.airtable.com/v0/' + AT_BASE + '/' + AT_TRIPS_TABLE
+      + '?filterByFormula=' + encodeURIComponent(formula)
+      + '&sort[0][field]=Arrival%20Date&sort[0][direction]=desc&' + fields;
+    const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + AT_PAT } });
+    if (!resp.ok) throw new Error('Trips fetch error: ' + resp.status);
+    const data = await resp.json();
+    const trips = (data.records || []).map(rec => {
+      const f = rec.fields;
+      return {
+        gn:     String(f['Trip Name'] || f['Customer group naming'] || ''),
+        ar:     String(f['Arrival Date'] || ''),
+        co:     String(f['Checkout Date'] || ''),
+        cost:   Number(f['Entire trip cost'] || 0),
+        status: String(f['Stage'] || ''),
+        ch:     String(f['Channel contact'] || '')
+      };
+    });
+    T[crmId] = trips;
+    console.log('Loaded', trips.length, 'trips for', crmId);
     return trips;
   } catch(err) {
-    console.error('Trip fetch error for', crmId, err);
+    console.error('Trip fetch error for', crmId, ':', err);
     return [];
   }
 }
@@ -581,6 +578,35 @@ function us(){
   document.getElementById('s-r').textContent=fr(tr);
   document.getElementById('s-s').textContent=Object.values(ST).filter(s=>s.sent).length;
 }
+
+function statusColor(s) {
+  const map = {
+    'Trip completed':'#16a34a','Checked-in':'#0369a1','Paid and confirmed':'#7c3aed',
+    'Sent invoice':'#b45309','Inquiry':'#6b7280','Dead':'#dc2626',
+    'Trip cancelled':'#dc2626','Trip dates changed':'#d97706'
+  };
+  return map[s] || '#6b7280';
+}
+
+function renderTrips(c, trips) {
+  const phHtml = c.ph ? '<div style="display:inline-block;background:#e4f8f2;color:#0a6e6e;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;margin:0 4px 4px 0">📱 '+c.ph+'</div>' : '';
+  const cidHtml = c.cid ? '<div style="display:inline-block;background:#fff4ee;color:#c85010;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;margin:0 4px 4px 0">🆔 '+c.cid+'</div>' : '';
+  const contactRow = (phHtml||cidHtml) ? '<div style="padding:2px 0 7px;display:flex;flex-wrap:wrap">'+phHtml+cidHtml+'</div>' : '';
+  if (!trips || !trips.length) {
+    return contactRow + '<em style="font-size:11px;color:var(--text3)">No trips found for this customer.</em>';
+  }
+  return contactRow + trips.map(t => {
+    const a = t.ar ? t.ar.split('-')[2]+'/'+t.ar.split('-')[1]+'/'+t.ar.split('-')[0] : '';
+    const d = t.co ? t.co.split('-')[2]+'/'+t.co.split('-')[1]+'/'+t.co.split('-')[0] : '';
+    const cost = t.cost ? '฿'+Math.round(t.cost).toLocaleString() : '';
+    const grp = t.gn || '<span style="color:var(--text3);font-style:italic">No group name</span>';
+    const sc = statusColor(t.status);
+    const statusHtml = t.status ? '<span style="font-size:9px;font-weight:700;color:'+sc+';border:1px solid '+sc+';border-radius:3px;padding:1px 5px;margin-left:6px;white-space:nowrap">'+t.status+'</span>' : '';
+    const chHtml = t.ch ? '<span style="font-size:9px;color:#888;margin-left:5px">'+t.ch+'</span>' : '';
+    return '<div class="tr"><div class="tdot"></div><div class="tn"><div class="tgn">'+grp+statusHtml+chHtml+'</div><div class="tdt">'+a+(d?' → '+d:'')+(cost?' <span class="tc">'+cost+'</span>':'')+' </div></div></div>';
+  }).join('');
+}
+
 
 function render(){
   const q=document.getElementById('q').value.toLowerCase();
