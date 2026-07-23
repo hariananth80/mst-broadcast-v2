@@ -278,10 +278,35 @@ let adminUnlocked = false;
 
 const TEAM = ['Hari','Suprith','Srinath','View'];
 
+function getAssignee(c, idx) {
+  const lar = c.lar || ''; // latest arrival date e.g. "2024-09-01"
+  const ear = c.ear || ''; // earliest arrival date
+
+  // Rule 1: Only 2023 trips (latest arrival before 2024) → View
+  if (lar && lar < '2024-01-01') return 'View';
+
+  // Rule 2: Has trips from April 2025 onwards → Suprith
+  if (lar >= '2025-04-01') return 'Suprith';
+
+  // Rule 3: Has arrival dates from Dec 2023 onwards → Hari or Srinath (alternate)
+  if (lar >= '2023-12-01') {
+    // Alternate between Hari and Srinath based on index
+    return idx % 2 === 0 ? 'Hari' : 'Srinath';
+  }
+
+  // Default: round robin across all 4
+  return ['Hari','Suprith','Srinath','View'][idx % 4];
+}
+
 function assignAll() {
+  let hariSrinathIdx = 0;
   D.forEach((c, i) => {
     if (!ST[c.id]) ST[c.id] = {};
-    if (!ST[c.id].assignee) ST[c.id].assignee = TEAM[i % TEAM.length];
+    if (!ST[c.id].assignee) {
+      const assignee = getAssignee(c, hariSrinathIdx);
+      ST[c.id].assignee = assignee;
+      if (assignee === 'Hari' || assignee === 'Srinath') hariSrinathIdx++;
+    }
   });
   try { localStorage.setItem('mst_bc4_v2', JSON.stringify(ST)); } catch(e) {}
 }
@@ -413,7 +438,7 @@ async function loadCustomersFromAirtable() {
   if (statusEl) statusEl.textContent = '⏳ Loading customers from Airtable...';
   try {
     let all = [], offset = null, page = 0;
-    const fieldNames = ['Full Name','Customer ID','Phone number','Contact Channel','No of trips','Revenue','Customer journey'];
+    const fieldNames = ['Full Name','Customer ID','Phone number','Contact Channel','No of trips','Revenue','Customer journey','Arrival Date (from customer journeys)','Checkout Date (from customer journeys)'];
     const fieldParams = fieldNames.map(f => 'fields[]=' + encodeURIComponent(f)).join('&');
     do {
       page++;
@@ -432,6 +457,11 @@ async function loadCustomersFromAirtable() {
     D = all.map(rec => {
       const f = rec.fields;
       const rev = parseFloat(String(f['Revenue'] || '0').replace(/[^0-9.]/g,'')) || 0;
+      // Get all arrival dates from linked trips, find the latest one
+      const arDates = Array.isArray(f['Arrival Date (from customer journeys)']) 
+        ? f['Arrival Date (from customer journeys)'] : [];
+      const latestAr = arDates.length ? arDates.sort().slice(-1)[0] : '';
+      const earliestAr = arDates.length ? arDates.sort()[0] : '';
       return {
         id:  rec.id,
         n:   String(f['Full Name'] || '').trim(),
@@ -440,7 +470,9 @@ async function loadCustomersFromAirtable() {
         ch:  String(f['Contact Channel'] || '').trim(),
         tc:  Number(f['No of trips'] || 0),
         r:   rev,
-        tj:  Array.isArray(f['Customer journey']) ? f['Customer journey'] : []
+        tj:  Array.isArray(f['Customer journey']) ? f['Customer journey'] : [],
+        lar: latestAr,   // latest arrival date across all trips
+        ear: earliestAr  // earliest arrival date
       };
     }).filter(c => c.n).sort((a,b) => b.r - a.r);
 
@@ -607,7 +639,12 @@ function renderTrips(c, trips) {
   if (!trips || !trips.length) {
     return contactRow + '<em style="font-size:11px;color:var(--text3)">No trips found for this customer.</em>';
   }
-  return contactRow + trips.map(t => {
+  // Filter out Checked-in trips
+  const filteredTrips = trips.filter(t => t.status !== 'Checked-in');
+  if (!filteredTrips.length) {
+    return contactRow + '<em style="font-size:11px;color:var(--text3)">No displayable trips (all may be checked-in or none found).</em>';
+  }
+  return contactRow + filteredTrips.map(t => {
     const a = t.ar ? t.ar.split('-')[2]+'/'+t.ar.split('-')[1]+'/'+t.ar.split('-')[0] : '';
     const d = t.co ? t.co.split('-')[2]+'/'+t.co.split('-')[1]+'/'+t.co.split('-')[0] : '';
     const cost = t.cost ? '฿'+Math.round(t.cost).toLocaleString() : '';
